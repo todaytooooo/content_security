@@ -20,27 +20,78 @@ def read_image(path: Path) -> np.ndarray:
     return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
 
-def nms(boxes: list[tuple[int, int, int, int]], scores: list[float], overlap: float) -> list[int]:
+def nms(
+    boxes: list[tuple[int, int, int, int]],
+    scores: list[float],
+    overlap: float,
+) -> list[int]:
     if not boxes:
         return []
+
     data = np.asarray(boxes, dtype=np.float32)
     x1, y1 = data[:, 0], data[:, 1]
-    x2, y2 = data[:, 0] + data[:, 2], data[:, 1] + data[:, 3]
+    x2 = x1 + data[:, 2]
+    y2 = y1 + data[:, 3]
     area = np.maximum(0, x2 - x1) * np.maximum(0, y2 - y1)
+
+    # 第一步：原来的 IoU NMS，优先保留高分框。
     order = np.argsort(np.asarray(scores))[::-1]
     keep: list[int] = []
+
     while order.size:
         i = int(order[0])
         keep.append(i)
-        xx1 = np.maximum(x1[i], x1[order[1:]])
-        yy1 = np.maximum(y1[i], y1[order[1:]])
-        xx2 = np.minimum(x2[i], x2[order[1:]])
-        yy2 = np.minimum(y2[i], y2[order[1:]])
-        intersection = np.maximum(0, xx2 - xx1) * np.maximum(0, yy2 - yy1)
-        union = area[i] + area[order[1:]] - intersection
-        overlap_values = np.divide(intersection, union, out=np.zeros_like(intersection), where=union > 0)
-        order = order[1:][overlap_values <= overlap]
-    return keep
+        remaining = order[1:]
+
+        xx1 = np.maximum(x1[i], x1[remaining])
+        yy1 = np.maximum(y1[i], y1[remaining])
+        xx2 = np.minimum(x2[i], x2[remaining])
+        yy2 = np.minimum(y2[i], y2[remaining])
+
+        intersection = (
+            np.maximum(0, xx2 - xx1)
+            * np.maximum(0, yy2 - yy1)
+        )
+        union = area[i] + area[remaining] - intersection
+        iou = np.divide(
+            intersection,
+            union,
+            out=np.zeros_like(intersection),
+            where=union > 0,
+        )
+        order = remaining[iou <= overlap]
+
+    # 第二步：消除明显嵌套、横向位置接近的局部小框。
+    removed: set[int] = set()
+
+    for small in keep:
+        if area[small] <= 0:
+            continue
+
+        for large in keep:
+            # 小框面积最多为大框的 60%。
+            if small == large or area[small] >= 0.6 * area[large]:
+                continue
+
+            intersection_w = max(
+                0.0, min(x2[small], x2[large]) - max(x1[small], x1[large])
+            )
+            intersection_h = max(
+                0.0, min(y2[small], y2[large]) - max(y1[small], y1[large])
+            )
+            coverage = intersection_w * intersection_h / area[small]
+
+            small_center_x = (x1[small] + x2[small]) / 2
+            large_center_x = (x1[large] + x2[large]) / 2
+            center_distance = abs(small_center_x - large_center_x)
+            large_width = x2[large] - x1[large]
+
+            # 小框至少 90% 被包含，且横向中心接近。
+            if coverage >= 0.9 and center_distance <= 0.2 * large_width:
+                removed.add(small)
+                break
+
+    return [i for i in keep if i not in removed]
 
 
 def candidate_detections(image: np.ndarray, model: dict, stride: int, scale_step: float):
