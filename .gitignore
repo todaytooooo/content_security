@@ -1,0 +1,48 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Test, type-checking, and coverage output
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Training/inference artifacts and generated experiment output
+**/outputs/
+**/runs/
+**/weights/
+**/checkpoints/
+*.pt
+*.pth
+*.onnx
+
+# Downloaded datasets and archives
+**/data/
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
