@@ -98,6 +98,30 @@ class AudioClassificationTests(unittest.TestCase):
         restored = audio.model_from_checkpoint(dict(state_dict=model.state_dict(), config={}))
         self.assertEqual(sum(p.numel() for p in restored.parameters()), 737546)
 
+    def test_time_pooling_preserves_frequency_and_checkpoint(self):
+        model = audio.LeNet5(head="time")
+        self.assertEqual(sum(p.numel() for p in model.parameters()), 11990)
+        pool = model.classifier[2]
+        # A frequency ramp must survive pooling, while time is averaged away.
+        frequency = torch.arange(13.0).view(1, 1, 13, 1)
+        time = torch.arange(29.0).view(1, 1, 1, 29)
+        torch.testing.assert_close(pool(frequency + time), frequency + 14)
+        inputs = torch.randn(2, 1, 64, 128)
+        before = model.features[0].weight.detach().clone()
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        loss = torch.nn.functional.cross_entropy(model(inputs), torch.tensor([1, 9]))
+        loss.backward()
+        optimizer.step()
+        self.assertFalse(torch.equal(before, model.features[0].weight))
+        model.eval()
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "time.pt"
+            torch.save(dict(state_dict=model.state_dict(), config=dict(head="time")), path)
+            restored = audio.model_from_checkpoint(audio.load_checkpoint(path)).eval()
+            with torch.no_grad():
+                self.assertEqual(tuple(restored(inputs).shape), (2, 10))
+                torch.testing.assert_close(model(inputs), restored(inputs))
+
 
 if __name__ == "__main__":
     unittest.main()

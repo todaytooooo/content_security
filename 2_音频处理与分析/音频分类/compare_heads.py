@@ -13,7 +13,8 @@ from audio_classification import BASE, load_checkpoint, write_json
 def main():
     out = BASE / "outputs/head_comparison"
     out.mkdir(parents=True, exist_ok=True)
-    paths = [BASE / "outputs" / name / "test_fold10" for name in ["lenet5", "lenet5_gap"]]
+    paths = [BASE / "outputs" / name / "test_fold10"
+             for name in ["lenet5", "lenet5_gap", "lenet5_time"]]
     summaries, histories, checkpoints, manifests = [], [], [], []
     for path in paths:
         config = json.loads((path / "config.json").read_text(encoding="utf-8"))
@@ -29,29 +30,36 @@ def main():
         manifests.append((path / "split_manifest.csv").read_bytes())
     # Require identical data membership, normalizers and optimization settings.
     assert manifests[0] == manifests[1], "Split manifests differ"
-    for key in ["mean", "std"]:
-        torch.testing.assert_close(checkpoints[0][key], checkpoints[1][key], rtol=0, atol=0)
+    for checkpoint in checkpoints[1:]:
+        for key in ["mean", "std"]:
+            torch.testing.assert_close(checkpoints[0][key], checkpoint[key], rtol=0, atol=0)
     for key in ["seed", "features", "metadata_sha256", "test_fold", "val_fold", "epochs",
                 "patience", "batch_size", "lr", "weight_decay", "optimizer"]:
-        assert checkpoints[0]["config"][key] == checkpoints[1]["config"][key], key
+        for checkpoint in checkpoints[1:]:
+            assert checkpoints[0]["config"][key] == checkpoint["config"][key], key
     # Both runs start from the same seed: verify the unchanged backbone initializes identically.
     from audio_classification import LeNet5, seed_everything
     seed_everything(42)
     dense = LeNet5("dense")
     seed_everything(42)
     gap = LeNet5("gap")
+    seed_everything(42)
+    time = LeNet5("time")
     for key, value in dense.features.state_dict().items():
         torch.testing.assert_close(value, gap.features.state_dict()[key], rtol=0, atol=0)
+        torch.testing.assert_close(value, time.features.state_dict()[key], rtol=0, atol=0)
     write_json(out / "comparison.json", dict(experiments=summaries,
                split_and_normalization_identical=True, initial_backbone_identical=True,
-               accuracy_delta_pp=100 * (summaries[1]["accuracy"] - summaries[0]["accuracy"]),
-               macro_f1_delta_pp=100 * (summaries[1]["macro_f1"] - summaries[0]["macro_f1"])))
+               deltas_vs_dense={row["head"]: dict(
+                   accuracy_pp=100 * (row["accuracy"] - summaries[0]["accuracy"]),
+                   macro_f1_pp=100 * (row["macro_f1"] - summaries[0]["macro_f1"]))
+                   for row in summaries[1:]}))
     with (out / "comparison.csv").open("w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(summaries[0]))
         writer.writeheader()
         writer.writerows(summaries)
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
-    for summary, history, color in zip(summaries, histories, ["tab:blue", "tab:orange"]):
+    for summary, history, color in zip(summaries, histories, ["tab:blue", "tab:orange", "tab:green"]):
         epochs = [row["epoch"] for row in history]
         for ax, metric in zip(axes, ["loss", "accuracy"]):
             for split, style in [("train", "-"), ("val", "--")]:

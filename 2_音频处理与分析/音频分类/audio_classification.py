@@ -178,10 +178,11 @@ class LeNet5(nn.Module):
         if head == "dense":
             self.classifier = nn.Sequential(nn.Flatten(), nn.Linear(16 * 13 * 29, 120), nn.Tanh(),
                                             nn.Linear(120, 84), nn.Tanh(), nn.Linear(84, 10))
-        elif head == "gap":
+        elif head in ["gap", "time"]:
+            frequency_bins = 13 if head == "time" else 1
             self.classifier = nn.Sequential(nn.Conv2d(16, 64, 1), nn.ReLU(),
-                                            nn.AdaptiveAvgPool2d(1), nn.Flatten(),
-                                            nn.Dropout(0.3), nn.Linear(64, 10))
+                                            nn.AdaptiveAvgPool2d((frequency_bins, 1)), nn.Flatten(),
+                                            nn.Dropout(0.3), nn.Linear(64 * frequency_bins, 10))
         else:
             raise ValueError(f"Unknown classifier head: {head}")
 
@@ -300,7 +301,7 @@ def train(args, rows, x, y, folds, test_fold, val_fold):
     model = LeNet5(head=args.head).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     config = dict(model="LeNet-5 audio adaptation", head=args.head,
-                  head_dropout=0.3 if args.head == "gap" else 0.0,
+                  head_dropout=0.3 if args.head in ["gap", "time"] else 0.0,
                   features=FEATURE_CONFIG, classes=CLASSES,
                   seed=args.seed, test_fold=test_fold, val_fold=val_fold,
                   train_folds=sorted(set(folds[train_mask].tolist())),
@@ -402,7 +403,7 @@ def main():
     parser.add_argument("--data-root", type=Path)
     parser.add_argument("--cache", type=Path, default=BASE / "cache")
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--head", choices=["dense", "gap"], default="dense")
+    parser.add_argument("--head", choices=["dense", "gap", "time"], default="dense")
     parser.add_argument("--test-fold", type=int, choices=range(1, 11), default=10)
     parser.add_argument("--val-fold", type=int, choices=range(1, 11))
     parser.add_argument("--cross-validation", action="store_true")
@@ -418,7 +419,7 @@ def main():
     parser.add_argument("--audio", type=Path)
     args = parser.parse_args()
     if args.output is None:
-        args.output = BASE / "outputs" / ("lenet5_gap" if args.head == "gap" else "lenet5")
+        args.output = BASE / "outputs" / ("lenet5" if args.head == "dense" else f"lenet5_{args.head}")
     if min(args.epochs, args.patience, args.batch_size, args.threads) <= 0 or args.lr <= 0 or args.weight_decay < 0:
         parser.error("epochs/patience/batch-size/threads/lr must be positive; weight-decay must be nonnegative")
     torch.set_num_threads(args.threads)

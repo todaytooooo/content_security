@@ -4,9 +4,12 @@
 
 新增轻量分类头实验见 [分类头对照实验.md](分类头对照实验.md)。原版默认仍为 `--head dense`；使用 `--head gap` 可替换成 `1×1 Conv(16→64) → ReLU → 全局平均池化 → Dropout(0.3) → Linear(64→10)`，保留前两层卷积和 Log-Mel 特征。参数由 737546 降至 4310。两个版本都从零训练。
 
+`--head time` 使用 `1×1 Conv(16→64) → ReLU → AdaptiveAvgPool2d((13, 1)) → Dropout(0.3) → Linear(832→10)`：仅沿时间轴池化、保留 13 个频率位置，参数量为 11990。当前三个版本的对照结果与局限见 [分类头对照实验.md](分类头对照实验.md)。
+
 ```powershell
 # 在本目录执行；默认输出 outputs/lenet5_gap，不覆盖原版
 & "D:\Tools\Anaconda\envs\content-security\python.exe" -u audio_classification.py train --head gap
+& "D:\Tools\Anaconda\envs\content-security\python.exe" -u audio_classification.py train --head time
 & "D:\Tools\Anaconda\envs\content-security\python.exe" audio_classification.py evaluate --checkpoint outputs/lenet5_gap/test_fold10/best.pt
 & "D:\Tools\Anaconda\envs\content-security\python.exe" compare_heads.py
 ```
