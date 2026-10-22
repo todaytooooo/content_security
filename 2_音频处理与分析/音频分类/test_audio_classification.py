@@ -122,6 +122,31 @@ class AudioClassificationTests(unittest.TestCase):
                 self.assertEqual(tuple(restored(inputs).shape), (2, 10))
                 torch.testing.assert_close(model(inputs), restored(inputs))
 
+    def test_mfcc_properties_and_cnn_checkpoint(self):
+        wave = np.sin(2 * np.pi * 440 * np.arange(64000) / 16000).astype(np.float32)
+        mfcc = audio.extract_feature(wave, "mfcc")
+        self.assertEqual(mfcc.shape, (40, 128))
+        self.assertTrue(np.isfinite(mfcc).all())
+        expected = audio.dct(audio.log_mel(wave), type=2, norm="ortho", axis=0)[:40]
+        np.testing.assert_allclose(mfcc, expected, rtol=1e-6, atol=1e-6)
+        model = audio.AudioCNN()
+        self.assertEqual(sum(p.numel() for p in model.parameters()), 5226)
+        inputs = torch.randn(2, 1, 40, 128)
+        before = model.features[0].weight.detach().clone()
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        loss = torch.nn.functional.cross_entropy(model(inputs), torch.tensor([1, 9]))
+        loss.backward()
+        optimizer.step()
+        self.assertFalse(torch.equal(before, model.features[0].weight))
+        model.eval()
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "cnn.pt"
+            torch.save(dict(state_dict=model.state_dict(), config=dict(model_type="cnn", feature_type="mfcc")), path)
+            restored = audio.model_from_checkpoint(audio.load_checkpoint(path)).eval()
+            with torch.no_grad():
+                self.assertEqual(tuple(restored(inputs).shape), (2, 10))
+                torch.testing.assert_close(model(inputs), restored(inputs))
+
 
 if __name__ == "__main__":
     unittest.main()

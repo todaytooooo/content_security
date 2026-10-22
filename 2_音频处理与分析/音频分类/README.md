@@ -6,12 +6,19 @@
 
 `--head time` 使用 `1×1 Conv(16→64) → ReLU → AdaptiveAvgPool2d((13, 1)) → Dropout(0.3) → Linear(832→10)`：仅沿时间轴池化、保留 13 个频率位置，参数量为 11990。当前三个版本的对照结果与局限见 [分类头对照实验.md](分类头对照实验.md)。
 
+新增的 [MFCC_CNN对照实验.md](MFCC_CNN对照实验.md) 使用同一音频预处理得到 40×128 MFCC（对 Log-Mel 做正交 DCT-II），再训练一个 5,226 参数的轻量 2D CNN；该独立方案在固定的 fold10 测试上得到 61.89% accuracy、60.82% macro-F1。它同时改变了特征和网络，不能视为“只替换 LeNet 分类头”的消融。
+
+固定方案的三种子（42、7、2026）复现现已完成：fold10 Accuracy 为 **61.81% ± 1.44 个百分点**，Macro-F1 为 **61.32% ± 1.76 个百分点**（均值 ± 样本标准差）。运行 `summarize_mfcc_seeds.py` 可核对三次划分及设置并重新生成汇总；详细结果及局限见上述 MFCC 对照记录。
+
 ```powershell
 # 在本目录执行；默认输出 outputs/lenet5_gap，不覆盖原版
 & "D:\Tools\Anaconda\envs\content-security\python.exe" -u audio_classification.py train --head gap
 & "D:\Tools\Anaconda\envs\content-security\python.exe" -u audio_classification.py train --head time
 & "D:\Tools\Anaconda\envs\content-security\python.exe" audio_classification.py evaluate --checkpoint outputs/lenet5_gap/test_fold10/best.pt
 & "D:\Tools\Anaconda\envs\content-security\python.exe" compare_heads.py
+# MFCC + 2D CNN（输出到 outputs/mfcc_cnn，不覆盖 LeNet 实验）
+& "D:\Tools\Anaconda\envs\content-security\python.exe" -u audio_classification.py train --model cnn --feature mfcc
+& "D:\Tools\Anaconda\envs\content-security\python.exe" audio_classification.py evaluate --checkpoint outputs/mfcc_cnn/test_fold10/best.pt
 ```
 
 评估和预测会从权重配置自动识别分类头，旧版没有 `head` 字段的权重按 dense 加载。`compare_heads.py` 核对两个实验划分、标准化和训练设置的一致性，并生成 `outputs/head_comparison/` 下的 JSON、CSV 与对照图；需先完成两个版本训练。
@@ -22,7 +29,9 @@
 - `test_audio_classification.py`：合成音频单元测试；不把合成数据当作真实实验结果。
 - `requirements.txt`：运行依赖。
 - `cache/logmel_v1.npz`：首次运行产生的特征缓存，可重新生成。
+- `cache/mfcc_v1.npz`：MFCC + 2D CNN 实验的独立特征缓存。
 - `outputs/lenet5/test_fold10/`：真实训练结果，包括模型和图表。
+- `outputs/mfcc_cnn/test_fold10/`：MFCC + 2D CNN 的权重、指标、预测、曲线和混淆矩阵。
 - `UrbanSound8K/`：现有解压数据；程序自动查找嵌套目录中的唯一元数据文件。
 
 程序默认路径均以脚本所在目录为基准，从其他工作目录调用也可以。缓存和大型数据、模型不加入 Git。

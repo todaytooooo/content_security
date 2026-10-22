@@ -18,6 +18,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy
+from scipy.fft import dct
 from scipy.io import wavfile
 from scipy.signal import resample_poly, stft
 import sklearn
@@ -33,6 +34,8 @@ CLASSES = ["air_conditioner", "car_horn", "children_playing", "dog_bark", "drill
            "engine_idling", "gun_shot", "jackhammer", "siren", "street_music"]
 FEATURE_CONFIG = dict(version=1, sample_rate=16000, seconds=4, n_fft=512,
                       hop=256, n_mels=64, time_bins=128, scale="HTK", top_db=80)
+MFCC_CONFIG = dict(**FEATURE_CONFIG, feature_type="mfcc", n_mfcc=40, dct_type=2,
+                   dct_norm="ortho")
 
 
 def write_json(path, obj):
@@ -135,28 +138,47 @@ def log_mel(audio):
     return np.stack([np.interp(new, old, channel) for channel in db]).astype(np.float32)
 
 
-def prepare(root, cache):
+def feature_config(feature_type):
+    if feature_type == "logmel":
+        return FEATURE_CONFIG
+    if feature_type == "mfcc":
+        return MFCC_CONFIG
+    raise ValueError(f"Unknown feature type: {feature_type}")
+
+
+def extract_feature(audio, feature_type):
+    mel = log_mel(audio)
+    if feature_type == "logmel":
+        return mel
+    if feature_type == "mfcc":
+        return dct(mel, type=2, norm="ortho", axis=0)[:MFCC_CONFIG["n_mfcc"]].astype(np.float32)
+    raise ValueError(f"Unknown feature type: {feature_type}")
+
+
+def prepare(root, cache, feature_type="logmel"):
     rows = read_metadata(root)
+    config = feature_config(feature_type)
     metadata_hash = hashlib.sha256((root / "metadata/UrbanSound8K.csv").read_bytes()).hexdigest()
-    signature = json.dumps(dict(config=FEATURE_CONFIG, metadata_sha256=metadata_hash), sort_keys=True)
+    signature = json.dumps(dict(config=config, metadata_sha256=metadata_hash), sort_keys=True)
     cache.mkdir(parents=True, exist_ok=True)
-    path = cache / "logmel_v1.npz"
+    path = cache / f"{feature_type}_v{config['version']}.npz"
+    feature_shape = (config.get("n_mfcc", config["n_mels"]), config["time_bins"])
     if path.exists():
         with np.load(path, allow_pickle=False) as archive:
             if str(archive["signature"]) != signature:
                 raise ValueError("Cache configuration differs; use a new --cache directory")
             x, y, folds = archive["x"], archive["y"], archive["folds"]
-        if x.shape != (len(rows), 64, 128) or not np.isfinite(x).all():
+        if x.shape != (len(rows), *feature_shape) or not np.isfinite(x).all():
             raise ValueError("Invalid feature cache")
         if not np.array_equal(y, [int(r["classID"]) for r in rows]) or not np.array_equal(folds, [int(r["fold"]) for r in rows]):
             raise ValueError("Cache labels/folds do not match metadata")
         return rows, x, y, folds
-    x = np.empty((len(rows), 64, 128), dtype=np.float32)
+    x = np.empty((len(rows), *feature_shape), dtype=np.float32)
     start = time.time()
     with threadpool_limits(limits=1):
         for i, row in enumerate(rows):
             audio = load_audio(root / "audio" / f"fold{row['fold']}" / row["slice_file_name"])
-            x[i] = log_mel(audio)
+            x[i] = extract_feature(audio, feature_type)
             if (i + 1) % 500 == 0 or i + 1 == len(rows):
                 print(f"Features {i + 1}/{len(rows)} ({time.time() - start:.1f}s)", flush=True)
     y = np.array([int(r["classID"]) for r in rows], dtype=np.int64)
@@ -188,6 +210,29 @@ class LeNet5(nn.Module):
 
     def forward(self, x):
         return self.classifier(self.features(x))
+
+
+class AudioCNN(nn.Module):
+    """Two-block 2D CNN for 1x40x128 MFCC input, trained from scratch."""
+    def __init__(self):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv2d(1, 16, 3, padding=1), nn.BatchNorm2d(16), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(16, 32, 3, padding=1), nn.BatchNorm2d(32), nn.ReLU(), nn.MaxPool2d(2),
+        )
+        self.classifier = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(),
+                                        nn.Dropout(0.3), nn.Linear(32, 10))
+
+    def forward(self, x):
+        return self.classifier(self.features(x))
+
+
+def create_model(model_type, head="dense"):
+    if model_type == "lenet":
+        return LeNet5(head=head)
+    if model_type == "cnn":
+        return AudioCNN()
+    raise ValueError(f"Unknown model type: {model_type}")
 
 
 def seed_everything(seed):
@@ -280,7 +325,8 @@ def load_checkpoint(path):
 
 def model_from_checkpoint(checkpoint):
     # Historical checkpoints did not store a head field and use the dense head.
-    model = LeNet5(head=checkpoint.get("config", {}).get("head", "dense"))
+    config = checkpoint.get("config", {})
+    model = create_model(config.get("model_type", "lenet"), head=config.get("head", "dense"))
     model.load_state_dict(checkpoint["state_dict"])
     return model
 
@@ -298,11 +344,12 @@ def train(args, rows, x, y, folds, test_fold, val_fold):
     val_loader = loader(x, y, val_mask, mean, std, args.batch_size)
     device = torch.device("cuda" if args.device == "auto" and torch.cuda.is_available() else
                           "cpu" if args.device == "auto" else args.device)
-    model = LeNet5(head=args.head).to(device)
+    model = create_model(args.model, head=args.head).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    config = dict(model="LeNet-5 audio adaptation", head=args.head,
+    config = dict(model="LeNet-5 audio adaptation" if args.model == "lenet" else "MFCC 2D CNN",
+                  model_type=args.model, head=args.head if args.model == "lenet" else None,
                   head_dropout=0.3 if args.head in ["gap", "time"] else 0.0,
-                  features=FEATURE_CONFIG, classes=CLASSES,
+                  features=feature_config(args.feature), feature_type=args.feature, classes=CLASSES,
                   seed=args.seed, test_fold=test_fold, val_fold=val_fold,
                   train_folds=sorted(set(folds[train_mask].tolist())),
                   n_train=int(train_mask.sum()), n_val=int(val_mask.sum()), n_test=int(test_mask.sum()),
@@ -362,9 +409,11 @@ def train(args, rows, x, y, folds, test_fold, val_fold):
     plt.close(fig)
     fig, ax = plt.subplots(figsize=(9, 4))
     sample = int(np.flatnonzero(train_mask)[0])
-    image = ax.imshow(x[sample], origin="lower", aspect="auto", extent=[0, 4, 0, 64], cmap="magma")
-    ax.set(xlabel="Time (s)", ylabel="Mel band", title=f"Log-Mel: {CLASSES[y[sample]]}")
-    fig.colorbar(image, ax=ax, label="dB")
+    image = ax.imshow(x[sample], origin="lower", aspect="auto", extent=[0, 4, 0, x.shape[1]], cmap="magma")
+    label = "Mel band" if args.feature == "logmel" else "MFCC coefficient"
+    units = "dB" if args.feature == "logmel" else "coefficient value"
+    ax.set(xlabel="Time (s)", ylabel=label, title=f"{args.feature.upper()}: {CLASSES[y[sample]]}")
+    fig.colorbar(image, ax=ax, label=units)
     fig.tight_layout()
     fig.savefig(out / "logmel_example.png", dpi=150)
     plt.close(fig)
@@ -376,10 +425,12 @@ def smoke_test():
     seed_everything(42)
     torch.set_num_threads(2)
     with threadpool_limits(limits=1):
-        silent = log_mel(np.zeros(64000, np.float32))
-        tone = log_mel(np.sin(2 * np.pi * 440 * np.arange(64000) / 16000).astype(np.float32))
+        silent = extract_feature(np.zeros(64000, np.float32), "logmel")
+        tone = extract_feature(np.sin(2 * np.pi * 440 * np.arange(64000) / 16000).astype(np.float32), "logmel")
+        mfcc = extract_feature(np.zeros(64000, np.float32), "mfcc")
     assert silent.shape == tone.shape == (64, 128)
-    assert np.isfinite(silent).all() and np.isfinite(tone).all()
+    assert mfcc.shape == (40, 128)
+    assert np.isfinite(silent).all() and np.isfinite(tone).all() and np.isfinite(mfcc).all()
     model = LeNet5()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     inputs = torch.randn(2, 1, 64, 128)
@@ -403,7 +454,9 @@ def main():
     parser.add_argument("--data-root", type=Path)
     parser.add_argument("--cache", type=Path, default=BASE / "cache")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--model", choices=["lenet", "cnn"], default="lenet")
     parser.add_argument("--head", choices=["dense", "gap", "time"], default="dense")
+    parser.add_argument("--feature", choices=["logmel", "mfcc"], default="logmel")
     parser.add_argument("--test-fold", type=int, choices=range(1, 11), default=10)
     parser.add_argument("--val-fold", type=int, choices=range(1, 11))
     parser.add_argument("--cross-validation", action="store_true")
@@ -418,8 +471,13 @@ def main():
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--audio", type=Path)
     args = parser.parse_args()
+    if args.model == "cnn" and args.feature != "mfcc":
+        parser.error("--model cnn requires --feature mfcc for this fixed comparison")
+    if args.model == "lenet" and args.feature != "logmel":
+        parser.error("--model lenet requires --feature logmel for this fixed comparison")
     if args.output is None:
-        args.output = BASE / "outputs" / ("lenet5" if args.head == "dense" else f"lenet5_{args.head}")
+        args.output = BASE / "outputs" / ("mfcc_cnn" if args.model == "cnn" else
+                                            "lenet5" if args.head == "dense" else f"lenet5_{args.head}")
     if min(args.epochs, args.patience, args.batch_size, args.threads) <= 0 or args.lr <= 0 or args.weight_decay < 0:
         parser.error("epochs/patience/batch-size/threads/lr must be positive; weight-decay must be nonnegative")
     torch.set_num_threads(args.threads)
@@ -432,23 +490,27 @@ def main():
         if not args.audio:
             parser.error("--audio is required")
         checkpoint = load_checkpoint(args.checkpoint)
+        args.feature = checkpoint.get("config", {}).get("feature_type", "logmel")
         model = model_from_checkpoint(checkpoint).eval()
         with threadpool_limits(limits=1):
-            feature = log_mel(load_audio(args.audio))[None]
+            feature = extract_feature(load_audio(args.audio), args.feature)[None]
         inputs = ((torch.from_numpy(feature) - checkpoint["mean"]) / checkpoint["std"])[:, None]
         with torch.no_grad():
             probs = model(inputs).softmax(1)[0]
         for index in probs.argsort(descending=True)[:3].tolist():
             print(f"{CLASSES[index]}: {probs[index].item():.4f}")
         return
+    if args.command == "evaluate":
+        checkpoint = load_checkpoint(args.checkpoint)
+        args.feature = checkpoint.get("config", {}).get("feature_type", "logmel")
     args.resolved_root = dataset_root(args.data_root)
-    rows, x, y, folds = prepare(args.resolved_root, args.cache)
+    rows, x, y, folds = prepare(args.resolved_root, args.cache, args.feature)
     if args.command == "prepare":
         print(f"Validated {len(rows)} files; feature shape {x.shape}")
     elif args.command == "evaluate":
         checkpoint = load_checkpoint(args.checkpoint)
         digest = hashlib.sha256((args.resolved_root / "metadata/UrbanSound8K.csv").read_bytes()).hexdigest()
-        if checkpoint["config"]["metadata_sha256"] != digest or checkpoint["config"]["features"] != FEATURE_CONFIG:
+        if checkpoint["config"]["metadata_sha256"] != digest or checkpoint["config"]["features"] != feature_config(args.feature):
             raise ValueError("Checkpoint metadata/features do not match current data")
         model = model_from_checkpoint(checkpoint).eval()
         mask = folds == checkpoint["config"]["test_fold"]
