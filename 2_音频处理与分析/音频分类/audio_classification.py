@@ -171,12 +171,19 @@ class LeNet5(nn.Module):
     1x64x128 -> 6x60x124 -> 6x30x62 -> 16x26x58 -> 16x13x29
     -> 120 -> 84 -> 10. Tanh follows the original activation choice.
     """
-    def __init__(self):
+    def __init__(self, head="dense"):
         super().__init__()
         self.features = nn.Sequential(nn.Conv2d(1, 6, 5), nn.Tanh(), nn.AvgPool2d(2),
                                       nn.Conv2d(6, 16, 5), nn.Tanh(), nn.AvgPool2d(2))
-        self.classifier = nn.Sequential(nn.Flatten(), nn.Linear(16 * 13 * 29, 120), nn.Tanh(),
-                                        nn.Linear(120, 84), nn.Tanh(), nn.Linear(84, 10))
+        if head == "dense":
+            self.classifier = nn.Sequential(nn.Flatten(), nn.Linear(16 * 13 * 29, 120), nn.Tanh(),
+                                            nn.Linear(120, 84), nn.Tanh(), nn.Linear(84, 10))
+        elif head == "gap":
+            self.classifier = nn.Sequential(nn.Conv2d(16, 64, 1), nn.ReLU(),
+                                            nn.AdaptiveAvgPool2d(1), nn.Flatten(),
+                                            nn.Dropout(0.3), nn.Linear(64, 10))
+        else:
+            raise ValueError(f"Unknown classifier head: {head}")
 
     def forward(self, x):
         return self.classifier(self.features(x))
@@ -270,6 +277,13 @@ def load_checkpoint(path):
     return torch.load(path, map_location="cpu", weights_only=True)
 
 
+def model_from_checkpoint(checkpoint):
+    # Historical checkpoints did not store a head field and use the dense head.
+    model = LeNet5(head=checkpoint.get("config", {}).get("head", "dense"))
+    model.load_state_dict(checkpoint["state_dict"])
+    return model
+
+
 def train(args, rows, x, y, folds, test_fold, val_fold):
     seed_everything(args.seed)
     out = args.output / f"test_fold{test_fold}"
@@ -283,9 +297,11 @@ def train(args, rows, x, y, folds, test_fold, val_fold):
     val_loader = loader(x, y, val_mask, mean, std, args.batch_size)
     device = torch.device("cuda" if args.device == "auto" and torch.cuda.is_available() else
                           "cpu" if args.device == "auto" else args.device)
-    model = LeNet5().to(device)
+    model = LeNet5(head=args.head).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    config = dict(model="LeNet-5 audio adaptation", features=FEATURE_CONFIG, classes=CLASSES,
+    config = dict(model="LeNet-5 audio adaptation", head=args.head,
+                  head_dropout=0.3 if args.head == "gap" else 0.0,
+                  features=FEATURE_CONFIG, classes=CLASSES,
                   seed=args.seed, test_fold=test_fold, val_fold=val_fold,
                   train_folds=sorted(set(folds[train_mask].tolist())),
                   n_train=int(train_mask.sum()), n_val=int(val_mask.sum()), n_test=int(test_mask.sum()),
@@ -385,7 +401,8 @@ def main():
     parser.add_argument("command", choices=["prepare", "train", "evaluate", "predict", "smoke-test"])
     parser.add_argument("--data-root", type=Path)
     parser.add_argument("--cache", type=Path, default=BASE / "cache")
-    parser.add_argument("--output", type=Path, default=BASE / "outputs/lenet5")
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--head", choices=["dense", "gap"], default="dense")
     parser.add_argument("--test-fold", type=int, choices=range(1, 11), default=10)
     parser.add_argument("--val-fold", type=int, choices=range(1, 11))
     parser.add_argument("--cross-validation", action="store_true")
@@ -400,6 +417,8 @@ def main():
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--audio", type=Path)
     args = parser.parse_args()
+    if args.output is None:
+        args.output = BASE / "outputs" / ("lenet5_gap" if args.head == "gap" else "lenet5")
     if min(args.epochs, args.patience, args.batch_size, args.threads) <= 0 or args.lr <= 0 or args.weight_decay < 0:
         parser.error("epochs/patience/batch-size/threads/lr must be positive; weight-decay must be nonnegative")
     torch.set_num_threads(args.threads)
@@ -412,8 +431,7 @@ def main():
         if not args.audio:
             parser.error("--audio is required")
         checkpoint = load_checkpoint(args.checkpoint)
-        model = LeNet5().eval()
-        model.load_state_dict(checkpoint["state_dict"])
+        model = model_from_checkpoint(checkpoint).eval()
         with threadpool_limits(limits=1):
             feature = log_mel(load_audio(args.audio))[None]
         inputs = ((torch.from_numpy(feature) - checkpoint["mean"]) / checkpoint["std"])[:, None]
@@ -431,8 +449,7 @@ def main():
         digest = hashlib.sha256((args.resolved_root / "metadata/UrbanSound8K.csv").read_bytes()).hexdigest()
         if checkpoint["config"]["metadata_sha256"] != digest or checkpoint["config"]["features"] != FEATURE_CONFIG:
             raise ValueError("Checkpoint metadata/features do not match current data")
-        model = LeNet5().eval()
-        model.load_state_dict(checkpoint["state_dict"])
+        model = model_from_checkpoint(checkpoint).eval()
         mask = folds == checkpoint["config"]["test_fold"]
         batches = loader(x, y, mask, checkpoint["mean"].numpy(), checkpoint["std"].numpy(), args.batch_size)
         loss, acc, truth, predictions = run_epoch(model, batches, "cpu")

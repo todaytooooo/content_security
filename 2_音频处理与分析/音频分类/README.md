@@ -2,6 +2,17 @@
 
 本实验从零训练 LeNet-5 的音频适配版本，把环境声音转换成二维 Log-Mel 声谱图，再进行 10 分类。不使用预训练权重。实际运行结果、实验原理和局限见 [实验报告.md](实验报告.md)。
 
+新增轻量分类头实验见 [分类头对照实验.md](分类头对照实验.md)。原版默认仍为 `--head dense`；使用 `--head gap` 可替换成 `1×1 Conv(16→64) → ReLU → 全局平均池化 → Dropout(0.3) → Linear(64→10)`，保留前两层卷积和 Log-Mel 特征。参数由 737546 降至 4310。两个版本都从零训练。
+
+```powershell
+# 在本目录执行；默认输出 outputs/lenet5_gap，不覆盖原版
+& "D:\Tools\Anaconda\envs\content-security\python.exe" -u audio_classification.py train --head gap
+& "D:\Tools\Anaconda\envs\content-security\python.exe" audio_classification.py evaluate --checkpoint outputs/lenet5_gap/test_fold10/best.pt
+& "D:\Tools\Anaconda\envs\content-security\python.exe" compare_heads.py
+```
+
+评估和预测会从权重配置自动识别分类头，旧版没有 `head` 字段的权重按 dense 加载。`compare_heads.py` 核对两个实验划分、标准化和训练设置的一致性，并生成 `outputs/head_comparison/` 下的 JSON、CSV 与对照图；需先完成两个版本训练。
+
 ## 1. 文件说明
 
 - `audio_classification.py`：数据校验、特征提取、训练、评估、单音频预测和自检。

@@ -72,6 +72,32 @@ class AudioClassificationTests(unittest.TestCase):
             with torch.no_grad():
                 torch.testing.assert_close(model(features), restored(features))
 
+    def test_gap_head_training_and_checkpoint(self):
+        torch.manual_seed(42)
+        model = audio.LeNet5(head="gap")
+        self.assertEqual(sum(p.numel() for p in model.parameters()), 4310)
+        inputs = torch.randn(2, 1, 64, 128)
+        before = model.features[0].weight.detach().clone()
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        loss = torch.nn.functional.cross_entropy(model(inputs), torch.tensor([1, 9]))
+        loss.backward()
+        optimizer.step()
+        self.assertFalse(torch.equal(before, model.features[0].weight))
+        model.eval()
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "gap.pt"
+            torch.save(dict(state_dict=model.state_dict(), config=dict(head="gap")), path)
+            restored = audio.model_from_checkpoint(audio.load_checkpoint(path)).eval()
+            with torch.no_grad():
+                self.assertEqual(tuple(restored(inputs).shape), (2, 10))
+                torch.testing.assert_close(model(inputs), restored(inputs))
+                torch.testing.assert_close(model(inputs), model(inputs))
+
+    def test_legacy_checkpoint_model_selection(self):
+        model = audio.LeNet5()
+        restored = audio.model_from_checkpoint(dict(state_dict=model.state_dict(), config={}))
+        self.assertEqual(sum(p.numel() for p in restored.parameters()), 737546)
+
 
 if __name__ == "__main__":
     unittest.main()
