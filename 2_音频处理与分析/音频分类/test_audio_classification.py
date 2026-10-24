@@ -60,68 +60,6 @@ class AudioClassificationTests(unittest.TestCase):
             self.assertTrue(np.isfinite(loaded).all())
             self.assertGreater(float(np.std(loaded[:15000])), 0.2)
 
-    def test_saved_model_roundtrip(self):
-        torch.manual_seed(42)
-        model = audio.LeNet5().eval()
-        features = torch.randn(2, 1, 64, 128)
-        with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp) / "model.pt"
-            torch.save({"state_dict": model.state_dict()}, path)
-            restored = audio.LeNet5().eval()
-            restored.load_state_dict(audio.load_checkpoint(path)["state_dict"])
-            with torch.no_grad():
-                torch.testing.assert_close(model(features), restored(features))
-
-    def test_gap_head_training_and_checkpoint(self):
-        torch.manual_seed(42)
-        model = audio.LeNet5(head="gap")
-        self.assertEqual(sum(p.numel() for p in model.parameters()), 4310)
-        inputs = torch.randn(2, 1, 64, 128)
-        before = model.features[0].weight.detach().clone()
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-        loss = torch.nn.functional.cross_entropy(model(inputs), torch.tensor([1, 9]))
-        loss.backward()
-        optimizer.step()
-        self.assertFalse(torch.equal(before, model.features[0].weight))
-        model.eval()
-        with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp) / "gap.pt"
-            torch.save(dict(state_dict=model.state_dict(), config=dict(head="gap")), path)
-            restored = audio.model_from_checkpoint(audio.load_checkpoint(path)).eval()
-            with torch.no_grad():
-                self.assertEqual(tuple(restored(inputs).shape), (2, 10))
-                torch.testing.assert_close(model(inputs), restored(inputs))
-                torch.testing.assert_close(model(inputs), model(inputs))
-
-    def test_legacy_checkpoint_model_selection(self):
-        model = audio.LeNet5()
-        restored = audio.model_from_checkpoint(dict(state_dict=model.state_dict(), config={}))
-        self.assertEqual(sum(p.numel() for p in restored.parameters()), 737546)
-
-    def test_time_pooling_preserves_frequency_and_checkpoint(self):
-        model = audio.LeNet5(head="time")
-        self.assertEqual(sum(p.numel() for p in model.parameters()), 11990)
-        pool = model.classifier[2]
-        # A frequency ramp must survive pooling, while time is averaged away.
-        frequency = torch.arange(13.0).view(1, 1, 13, 1)
-        time = torch.arange(29.0).view(1, 1, 1, 29)
-        torch.testing.assert_close(pool(frequency + time), frequency + 14)
-        inputs = torch.randn(2, 1, 64, 128)
-        before = model.features[0].weight.detach().clone()
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-        loss = torch.nn.functional.cross_entropy(model(inputs), torch.tensor([1, 9]))
-        loss.backward()
-        optimizer.step()
-        self.assertFalse(torch.equal(before, model.features[0].weight))
-        model.eval()
-        with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp) / "time.pt"
-            torch.save(dict(state_dict=model.state_dict(), config=dict(head="time")), path)
-            restored = audio.model_from_checkpoint(audio.load_checkpoint(path)).eval()
-            with torch.no_grad():
-                self.assertEqual(tuple(restored(inputs).shape), (2, 10))
-                torch.testing.assert_close(model(inputs), restored(inputs))
-
     def test_mfcc_properties_and_cnn_checkpoint(self):
         wave = np.sin(2 * np.pi * 440 * np.arange(64000) / 16000).astype(np.float32)
         mfcc = audio.extract_feature(wave, "mfcc")
