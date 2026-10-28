@@ -21,6 +21,7 @@ htmlcov/
 
 # Training/inference artifacts and generated experiment output
 **/outputs/
+**/outputs_smoke/
 **/runs/
 **/weights/
 **/checkpoints/
@@ -34,6 +35,8 @@ htmlcov/
 *.tar.gz
 *.tgz
 *.zip
+**/mnist
+*.rar
 
 # Local environment and secrets
 .env
