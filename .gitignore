@@ -22,6 +22,8 @@ htmlcov/
 # Training/inference artifacts and generated experiment output
 **/outputs/
 **/outputs_smoke/
+**/outputs_online/
+**/outputs_online_smoke/
 **/runs/
 **/weights/
 **/checkpoints/
