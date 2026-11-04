@@ -1,8 +1,10 @@
 # 在 MNIST 上复现 FGSM
 
+2026-10-30 更新：当前模型统一为 LeNet-5，默认输出 `outputs_lenet/`，权重名为 `mnist_lenet.pt`。完整结构与新文件说明见 [LeNet实验文件说明](../LeNet实验文件说明.md)。旧 `outputs/` 为历史自定义 CNN 结果。
+
 参考：Ian J. Goodfellow, Jonathon Shlens, Christian Szegedy，*Explaining and Harnessing Adversarial Examples*，ICLR 2015。论文：https://arxiv.org/abs/1412.6572 。
 
-本实验复现论文的 FGSM 核心算法及对抗样本现象。使用自行定义的 CNN，不声称逐项复现论文的模型、超参数或数值结果；本实验也没有实现论文中的对抗训练。这里的分类准确率评估不是对抗样本检测器。
+本实验复现论文的 FGSM 核心算法及对抗样本现象。使用适配 MNIST 的 LeNet-5，不声称逐项复现 FGSM 论文的模型、超参数或数值结果；本脚本没有实现对抗训练。这里的分类准确率评估不是对抗样本检测器。
 
 ## 1. 算法理解
 
@@ -51,18 +53,18 @@ python -m venv .venv
 复用已训练模型，仅重新攻击和评估：
 
 ```powershell
-.\.venv\Scripts\python.exe fgsm_mnist.py --checkpoint outputs/mnist_cnn.pt --output-dir outputs_eval
+.\.venv\Scripts\python.exe fgsm_mnist.py --checkpoint outputs_lenet/mnist_lenet.pt --output-dir outputs_lenet_eval
 ```
 
 相同输出目录会覆盖已有实验结果。随机种子和确定性 cuDNN 设置可减少差异，但跨设备、跨依赖版本不保证数值完全一致。
 
 ## 3. 结果与指标
 
-`outputs/` 中生成：
+`outputs_lenet/` 中生成：
 
 | 文件 | 内容 |
 | --- | --- |
-| `mnist_cnn.pt` | 本次训练的模型权重；仅加载权重评估时不另存 |
+| `mnist_lenet.pt` | 本次训练的 LeNet 权重；仅加载权重评估时不另存 |
 | `metrics.csv` | 每个 ε 对应的指标，比例范围为 [0,1] |
 | `results.json` | 参数、设备、PyTorch 版本、训练记录和指标 |
 | `accuracy_vs_epsilon.png` | ε 与全部测试样本对抗准确率的关系 |
@@ -78,7 +80,7 @@ python -m venv .venv
 
 示例图优先展示原本正确、攻击成功的样本，属于有选择的展示，不能用它代替全量指标。若某个 ε 没有成功攻击，则不生成该 ε 的示例图。扰动图使用按 ε 缩放的红蓝色阶，便于观察方向，不能把色彩强度当作对抗图的实际视觉变化。
 
-本实现准备过程中本地执行工具启动失败，尚未实际训练或验证代码运行。因此此处不提供未经运行的准确率、成功率或图表；执行上述命令后，以生成文件为准。
+LeNet 版已通过结构和梯度测试并完成完整数据实验；指标以 `outputs_lenet/results.json` 为准，汇总见上级目录的 LeNet 实验说明。
 
 ## 4. 分析建议
 

@@ -1,5 +1,7 @@
 # 在 MNIST 上实现 PGD 对抗攻击
 
+2026-10-30 更新：模型统一为 LeNet-5，默认读取 `../FGSM/outputs_lenet/mnist_lenet.pt`，输出 `outputs_lenet/`。先运行新版 FGSM 脚本训练 LeNet。下文旧 `outputs/` 路径及“2026-10-28 本地实测结果”均为历史 CNN 记录，不是 LeNet 数据。详见 [LeNet实验文件说明](../LeNet实验文件说明.md)。
+
 参考：Aleksander Madry 等，*Towards Deep Learning Models Resistant to Adversarial Attacks*，ICLR 2018，https://arxiv.org/abs/1706.06083 。本实验实现其常用的 L∞ 约束、白盒、非定向 PGD 攻击，不是论文全部对抗训练流程或原始数值的逐项复现。
 
 ## 算法原理

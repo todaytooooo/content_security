@@ -1,5 +1,7 @@
 # 在线 RS-FGSM 与固定增强：独立验证实验
 
+历史记录：以下为 2026-10-28 自定义 CNN 结果，不是当前 LeNet-5 的结果。LeNet 新数据请查 `outputs_online_lenet/`。
+
 2026-10-28；CUDA，PyTorch 2.6.0+cu126，种子 42。完整配置、数据划分索引、权重和原始指标位于 `outputs_online/`。
 
 ## 设计

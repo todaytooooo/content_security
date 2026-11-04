@@ -1,5 +1,7 @@
 # 实验三：加入对抗样本后重新训练
 
+全部入口统一使用 LeNet-5。固定增强默认读取 `../FGSM/outputs_lenet/mnist_lenet.pt`，输出 `outputs_lenet/`；在线实验输出 `outputs_online_lenet/`。下文旧路径和既有数值均为历史 CNN 记录，不可当作 LeNet 结论。详见 [LeNet实验文件说明](../LeNet实验文件说明.md)。
+
 新增在线 RS-FGSM 对照与独立验证监控：参见 [在线RS-FGSM说明](在线RS-FGSM说明.md)，运行 `python online_rs_fgsm.py`。该实验先重新划分训练/验证数据并训练共同基线，输出到独立的 `outputs_online/`。
 
 已完成完整数据实验，详见 [实验结果分析](实验结果分析.md)。本次正常准确率从 98.70% 变为 98.91%，但 ε=0.2 的 FGSM 后准确率从 28.62% 降至 6.63%，PGD 后准确率为 0%。因此本次固定样本增强未达到防御目标。

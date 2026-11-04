@@ -13,7 +13,7 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader, Subset, TensorDataset
 from torchvision import datasets, transforms
 
-from adversarial_training import (ROOT, BASE, MNISTCNN, fresh_model, seed_all,
+from adversarial_training import (ROOT, BASE, LeNet5, fresh_model, seed_all,
                                   generate_training_adversaries, fgsm_attack)
 from pgd_mnist import pgd_attack
 
@@ -110,7 +110,7 @@ def dump_json(path, data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=ROOT / "FGSM" / "data")
-    parser.add_argument("--output-dir", type=Path, default=BASE / "outputs_online")
+    parser.add_argument("--output-dir", type=Path, default=BASE / "outputs_online_lenet")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--validation-size", type=int, default=5000)
     parser.add_argument("--baseline-epochs", type=int, default=5)
@@ -140,7 +140,7 @@ def main():
     output = args.output_dir
     output.mkdir(parents=True, exist_ok=True)
     config = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
-    dump_json(output / "config.json", {**config, "actual_device": str(device), "torch_version": str(torch.__version__)})
+    dump_json(output / "config.json", {**config, "architecture": "LeNet5", "actual_device": str(device), "torch_version": str(torch.__version__)})
     full = datasets.MNIST(args.data_dir, train=True, download=True, transform=transforms.ToTensor())
     try:
         train_indices, val_indices = split_indices(len(full), args.validation_size, args.seed)
@@ -162,11 +162,12 @@ def main():
         return DataLoader(data, batch_size=args.batch_size, shuffle=True,
                           generator=torch.Generator().manual_seed(args.seed))
     print(f"Device={device}; independent train={len(train_set)}, validation={len(val_set)}", flush=True)
-    baseline = MNISTCNN().to(device)
+    baseline = LeNet5().to(device)
     optimizer = torch.optim.Adam(baseline.parameters(), lr=args.lr)
     baseline_history = []
+    baseline_loader = training_loader(clean_data)
     for epoch in range(1, args.baseline_epochs + 1):
-        metrics = train_epoch(baseline, training_loader(clean_data), device, optimizer, "Clean", args.epsilon, args.rs_alpha)
+        metrics = train_epoch(baseline, baseline_loader, device, optimizer, "Clean", args.epsilon, args.rs_alpha)
         baseline_history.append({"epoch": epoch, **metrics})
         print(f"Baseline epoch={epoch} loss={metrics['train_loss']:.4f}", flush=True)
     torch.save(baseline.state_dict(), output / "Baseline.pt")
@@ -226,7 +227,7 @@ def main():
                 print(f"TEST {name}: {metrics}", flush=True)
             cache[cache_key] = measured
         results.extend({"model": name, "selected_epoch": epoch, **row} for row in cache[cache_key])
-        dump_json(output / "results.json", {"config": config, "selection": selections,
+        dump_json(output / "results.json", {"architecture": "LeNet5", "config": config, "selection": selections,
                   "baseline_training": baseline_history, "validation_history": history, "test_metrics": results})
     for filename, rows in (("validation_history.csv", history), ("test_metrics.csv", results)):
         with (output / filename).open("w", newline="", encoding="utf-8") as stream:

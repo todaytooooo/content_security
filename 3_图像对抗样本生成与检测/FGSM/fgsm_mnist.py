@@ -1,4 +1,4 @@
-"""Train a MNIST CNN and evaluate untargeted, white-box FGSM attacks."""
+"""Train MNIST LeNet-5 and evaluate untargeted, white-box FGSM attacks."""
 
 import argparse
 import csv
@@ -20,19 +20,30 @@ from torchvision import datasets, transforms
 BASE = Path(__file__).resolve().parent
 
 
-class MNISTCNN(nn.Module):
+class LeNet5(nn.Module):
+    """LeNet-5-style classifier: tanh, average pooling, fully connected C3.
+
+    Raw 28x28 images are zero-padded INSIDE the model, so attacks operate only
+    on the original 28x28 pixels. Uses modern 10-logit cross-entropy output
+    instead of the original paper's RBF output and trainable subsampling.
+    """
     def __init__(self):
         super().__init__()
         self.features = nn.Sequential(
-            nn.Conv2d(1, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
-            nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(1, 6, 5), nn.Tanh(), nn.AvgPool2d(2),
+            nn.Conv2d(6, 16, 5), nn.Tanh(), nn.AvgPool2d(2),
         )
         self.classifier = nn.Sequential(
-            nn.Flatten(), nn.Linear(64 * 7 * 7, 128), nn.ReLU(), nn.Linear(128, 10)
+            nn.Flatten(), nn.Linear(16 * 5 * 5, 120), nn.Tanh(),
+            nn.Linear(120, 84), nn.Tanh(), nn.Linear(84, 10),
         )
 
     def forward(self, x):
-        return self.classifier(self.features(x))
+        return self.classifier(self.features(F.pad(x, (2, 2, 2, 2))))
+
+
+# Compatibility for notebooks importing the old class name; architecture is LeNet.
+MNISTCNN = LeNet5
 
 
 def fgsm_attack(model, images, labels, epsilon):
@@ -162,7 +173,7 @@ def save_figures(rows, examples, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=BASE / "data")
-    parser.add_argument("--output-dir", type=Path, default=BASE / "outputs")
+    parser.add_argument("--output-dir", type=Path, default=BASE / "outputs_lenet")
     parser.add_argument("--checkpoint", type=Path, help="Load weights and skip training")
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=128)
@@ -194,7 +205,7 @@ def main():
     if args.test_limit:
         test_set = Subset(test_set, range(min(args.test_limit, len(test_set))))
     test_loader = DataLoader(test_set, batch_size=args.batch_size, shuffle=False, num_workers=0)
-    model = MNISTCNN().to(device)
+    model = LeNet5().to(device)
     history = []
     if args.checkpoint:
         model.load_state_dict(torch.load(args.checkpoint, map_location=device, weights_only=True))
@@ -205,7 +216,7 @@ def main():
         train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True, num_workers=0,
                                   generator=torch.Generator().manual_seed(args.seed))
         history = train(model, train_loader, device, args.epochs, args.lr)
-        torch.save(model.state_dict(), args.output_dir / "mnist_cnn.pt")
+        torch.save(model.state_dict(), args.output_dir / "mnist_lenet.pt")
     print(f"Device: {device}; clean test accuracy: {accuracy(model, test_loader, device):.4%}", flush=True)
     rows, examples = evaluate_attacks(model, test_loader, device, sorted(set([0.0] + args.epsilons)), args.examples)
     with (args.output_dir / "metrics.csv").open("w", newline="", encoding="utf-8") as file:
@@ -213,7 +224,7 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
     config = {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()}
-    report = {"config": config, "device": str(device), "torch_version": str(torch.__version__),
+    report = {"architecture": "LeNet5", "config": config, "device": str(device), "torch_version": str(torch.__version__),
               "training_history": history, "metrics": rows}
     (args.output_dir / "results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     save_figures(rows, examples, args.output_dir)

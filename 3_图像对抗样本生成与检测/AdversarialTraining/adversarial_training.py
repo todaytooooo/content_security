@@ -19,7 +19,7 @@ BASE = Path(__file__).resolve().parent
 ROOT = BASE.parent
 sys.path.insert(0, str(ROOT / "FGSM"))
 sys.path.insert(0, str(ROOT / "PGD"))
-from fgsm_mnist import MNISTCNN, accuracy, fgsm_attack, train
+from fgsm_mnist import LeNet5, accuracy, fgsm_attack, train
 from pgd_mnist import evaluate
 
 
@@ -49,7 +49,7 @@ def generate_training_adversaries(model, loader, device, epsilon):
 
 
 def fresh_model(state, device):
-    model = MNISTCNN().to(device)
+    model = LeNet5().to(device)
     model.load_state_dict(state)
     return model
 
@@ -76,8 +76,8 @@ def save_comparison(rows, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=ROOT / "FGSM" / "data")
-    parser.add_argument("--checkpoint", type=Path, default=ROOT / "FGSM" / "outputs" / "mnist_cnn.pt")
-    parser.add_argument("--output-dir", type=Path, default=BASE / "outputs")
+    parser.add_argument("--checkpoint", type=Path, default=ROOT / "FGSM" / "outputs_lenet" / "mnist_lenet.pt")
+    parser.add_argument("--output-dir", type=Path, default=BASE / "outputs_lenet")
     parser.add_argument("--train-epsilon", type=float, default=0.2)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--lr", type=float, default=0.001)
@@ -165,7 +165,7 @@ def main():
             rows.append({"model": name, **row})
         # Save incrementally, so completed model evaluations survive interruption.
         config = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
-        report = {"config": config, "device": str(device), "torch_version": str(torch.__version__),
+        report = {"architecture": "LeNet5", "config": config, "device": str(device), "torch_version": str(torch.__version__),
                   "train_samples": len(training), "adversarial_train_samples": len(training),
                   "test_samples": len(testing), "augmentation": "fixed FGSM from baseline; train split only",
                   "training_history": histories, "metrics": rows}

@@ -20,7 +20,7 @@ BASE = Path(__file__).resolve().parent
 FGSM_DIR = BASE.parent / "FGSM"
 # Reuse the established classifier and training code, so checkpoints are identical.
 sys.path.insert(0, str(FGSM_DIR))
-from fgsm_mnist import MNISTCNN, fgsm_attack, train
+from fgsm_mnist import LeNet5, fgsm_attack, train
 
 
 def pgd_attack(model, images, labels, epsilon, alpha=0.01, steps=40, random_start=True):
@@ -136,9 +136,9 @@ def save_plots(rows, examples, output):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=FGSM_DIR / "data")
-    parser.add_argument("--checkpoint", type=Path, default=FGSM_DIR / "outputs" / "mnist_cnn.pt")
+    parser.add_argument("--checkpoint", type=Path, default=FGSM_DIR / "outputs_lenet" / "mnist_lenet.pt")
     parser.add_argument("--train", action="store_true", help="Train a new model instead of loading a checkpoint")
-    parser.add_argument("--output-dir", type=Path, default=BASE / "outputs")
+    parser.add_argument("--output-dir", type=Path, default=BASE / "outputs_lenet")
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--batch-size", type=int, default=128)
@@ -169,7 +169,7 @@ def main():
     if device.type == "cuda" and not torch.cuda.is_available():
         parser.error("CUDA was requested but is unavailable")
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    model = MNISTCNN().to(device)
+    model = LeNet5().to(device)
     history = []
     if args.train:
         training = datasets.MNIST(args.data_dir, train=True, download=True, transform=transforms.ToTensor())
@@ -178,7 +178,7 @@ def main():
         train_loader = DataLoader(training, batch_size=args.batch_size, shuffle=True, num_workers=0,
                                   generator=torch.Generator().manual_seed(args.seed))
         history = train(model, train_loader, device, args.epochs, args.lr)
-        torch.save(model.state_dict(), args.output_dir / "mnist_cnn.pt")
+        torch.save(model.state_dict(), args.output_dir / "mnist_lenet.pt")
     else:
         model.load_state_dict(torch.load(args.checkpoint, map_location=device, weights_only=True))
     testing = datasets.MNIST(args.data_dir, train=False, download=True, transform=transforms.ToTensor())
@@ -193,7 +193,7 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
     config = {k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()}
-    report = {"config": config, "device": str(device), "torch_version": str(torch.__version__),
+    report = {"architecture": "LeNet5", "config": config, "device": str(device), "torch_version": str(torch.__version__),
               "training_history": history, "metrics": rows}
     (args.output_dir / "results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     save_plots(rows, examples, args.output_dir)

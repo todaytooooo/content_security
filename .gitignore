@@ -24,6 +24,8 @@ htmlcov/
 **/outputs_smoke/
 **/outputs_online/
 **/outputs_online_smoke/
+**/outputs_lenet/
+**/outputs_online_lenet/
 **/runs/
 **/weights/
 **/checkpoints/
